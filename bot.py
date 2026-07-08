@@ -74,8 +74,11 @@ def buscar_ofertas():
         log.error(f"Error obteniendo página: {e}")
         return []
 
-    # Debug: mostrar fragmento del HTML para diagnosticar estructura
-    log.info(f"  HTML recibido ({len(html)} chars). Muestra: {html[5000:6000]!r}")
+    # Debug: buscar dónde están los datos de productos
+    log.info(f"  HTML recibido ({len(html)} chars)")
+    for keyword in ["__NEXT_DATA__", "__PRELOADED_STATE__", "original_price", '"permalink"', "MLM-"]:
+        idx = html.find(keyword)
+        log.info(f"  '{keyword}' encontrado en posición: {idx} | contexto: {html[max(0,idx-30):idx+100]!r}" if idx != -1 else f"  '{keyword}' NO encontrado")
 
     # ML embebe datos de productos como JSON en el HTML
     productos = []
