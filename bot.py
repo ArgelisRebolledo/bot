@@ -33,13 +33,17 @@ def extraer_url_ml(pds_url):
     try:
         resp = requests.get(pds_url, headers=HEADERS, timeout=10, allow_redirects=True)
         html = resp.text
-        log.info(f"  [debug] página PDS largo={len(html)}, muestra={html[2000:2500]!r}")
-        # Buscar links de ML en la página
-        match = re.search(r'https?://[^\s"\'<>]*mercadolibre\.com\.mx[^\s"\'<>]*', html)
-        if match:
-            log.info(f"  [debug] ML URL encontrada: {match.group(0)[:100]}")
-            return match.group(0).rstrip(".,)")
-        log.info("  [debug] No se encontró URL de ML en la página")
+        log.info(f"  [debug] página PDS largo={len(html)}")
+        # Buscar distintos patrones de links
+        patrones = {
+            "mercadolibre": r'https?://[^\s"\'<>]*mercadolibre[^\s"\'<>]*',
+            "visit/go":     r'https?://[^\s"\'<>]*(?:visit|go|click|out)[^\s"\'<>]*',
+            "data-url":     r'data-url=["\']([^"\']+)["\']',
+            "href ML":      r'href=["\']([^"\']*mercado[^"\']*)["\']',
+        }
+        for nombre, patron in patrones.items():
+            m = re.search(patron, html)
+            log.info(f"  [debug] {nombre}: {m.group(0)[:120]!r}" if m else f"  [debug] {nombre}: no encontrado")
     except Exception as e:
         log.info(f"  [debug] Error: {e}")
     return None
