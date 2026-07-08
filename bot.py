@@ -10,6 +10,7 @@ TELEGRAM_CHANNEL  = os.environ.get("TELEGRAM_CHANNEL", "@ofertasMexiCanal")
 ML_APP_ID         = os.environ["ML_APP_ID"]
 ML_SECRET         = os.environ["ML_SECRET"]
 ML_AFFILIATE_TAG  = os.environ.get("ML_AFFILIATE_TAG", "heycharalco")
+SCRAPER_API_KEY   = os.environ["SCRAPER_API_KEY"]
 
 MIN_DISCOUNT      = int(os.environ.get("MIN_DISCOUNT", "25"))   # % mínimo de descuento
 POSTS_PER_RUN     = int(os.environ.get("POSTS_PER_RUN", "5"))   # cuántas ofertas publicar por corrida
@@ -43,34 +44,48 @@ def obtener_token_ml():
     return resp.json()["access_token"]
 
 
-def buscar_ofertas():
-    """Busca productos con descuento en ML México."""
-    token = obtener_token_ml()
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "User-Agent": "Mozilla/5.0 (compatible; OfertasBot/1.0)",
-        "Accept": "application/json",
-    }
+def scraper_get(url):
+    """Hace una petición a través de ScraperAPI para evitar bloqueos de IP."""
+    resp = requests.get(
+        "http://api.scraperapi.com",
+        params={"api_key": SCRAPER_API_KEY, "url": url},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
-    # Endpoints alternativos para encontrar ofertas
-    endpoints = [
-        # Productos con tag de buen precio
-        ("https://api.mercadolibre.com/sites/MLM/search",
-         {"tag": "good_price", "sort": "best_match", "limit": 50}),
-        # Destacados del día
-        ("https://api.mercadolibre.com/sites/MLM/search",
-         {"tag": "best_seller", "sort": "best_match", "limit": 50}),
+
+def buscar_ofertas():
+    """Busca productos con descuento en ML México vía ScraperAPI."""
+    token = obtener_token_ml()
+
+    busquedas = [
+        f"https://api.mercadolibre.com/sites/MLM/search?q=electronica&limit=20&sort=best_match&Authorization=Bearer%20{token}",
+        f"https://api.mercadolibre.com/sites/MLM/search?q=celular&limit=20&sort=best_match&Authorization=Bearer%20{token}",
+        f"https://api.mercadolibre.com/sites/MLM/search?q=hogar&limit=20&sort=best_match&Authorization=Bearer%20{token}",
+        f"https://api.mercadolibre.com/sites/MLM/search?q=ropa&limit=20&sort=best_match&Authorization=Bearer%20{token}",
+        f"https://api.mercadolibre.com/sites/MLM/search?q=deporte&limit=20&sort=best_match&Authorization=Bearer%20{token}",
+    ]
+
+    # ScraperAPI no soporta headers personalizados en plan gratuito,
+    # así que usamos el endpoint público sin auth (suficiente para búsqueda básica)
+    busquedas_publicas = [
+        "https://api.mercadolibre.com/sites/MLM/search?q=electronica&limit=20&sort=best_match",
+        "https://api.mercadolibre.com/sites/MLM/search?q=celular+smartphone&limit=20&sort=best_match",
+        "https://api.mercadolibre.com/sites/MLM/search?q=hogar+cocina&limit=20&sort=best_match",
+        "https://api.mercadolibre.com/sites/MLM/search?q=ropa+moda&limit=20&sort=best_match",
+        "https://api.mercadolibre.com/sites/MLM/search?q=deporte+fitness&limit=20&sort=best_match",
     ]
 
     productos = []
-    for url, params in endpoints:
+    for url in busquedas_publicas:
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=10)
-            resp.raise_for_status()
-            productos.extend(resp.json().get("results", []))
-            log.info(f"  ✓ {len(resp.json().get('results', []))} productos de {params.get('tag', url)}")
+            data = scraper_get(url)
+            resultados = data.get("results", [])
+            productos.extend(resultados)
+            log.info(f"  ✓ {len(resultados)} productos de {url.split('q=')[1].split('&')[0]}")
         except Exception as e:
-            log.warning(f"Error en endpoint {params}: {e}")
+            log.warning(f"Error buscando: {e}")
 
     return productos
 
