@@ -51,12 +51,17 @@ def buscar_url_ml(titulo):
 
         # Buscar el primer link de producto en resultados de ML
         match = re.search(
-            r'href=["\']( https?://(?:articulo|www)\.mercadolibre\.com\.mx/[^"\']{20,})["\']',
+            r'href=["\'](https?://(?:articulo|www)\.mercadolibre\.com\.mx/[^"\']{20,})["\']',
             html
         )
         if not match:
             match = re.search(
                 r'"permalink"\s*:\s*"(https?://[^"]*mercadolibre\.com\.mx/[^"]{20,})"',
+                html
+            )
+        if not match:
+            match = re.search(
+                r'(https?://articulo\.mercadolibre\.com\.mx/MLM[^"\s\'<>]{10,})',
                 html
             )
         if match:
