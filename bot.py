@@ -28,72 +28,77 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; OfertasBot/1.0)"}
 
 # ─── Fuentes de ofertas ───────────────────────────────────────────────────────
 
+def extraer_url_ml(pds_url):
+    """Visita la página de promodescuentos y extrae el link real de ML."""
+    try:
+        resp = requests.get(pds_url, headers=HEADERS, timeout=10, allow_redirects=True)
+        html = resp.text
+        # Buscar links de ML en la página
+        match = re.search(r'https?://[^\s"\'<>]*mercadolibre\.com\.mx[^\s"\'<>]*', html)
+        if match:
+            return match.group(0).rstrip(".,)")
+    except Exception:
+        pass
+    return None
+
+
 def desde_promodescuentos():
-    """Lee el RSS de promodescuentos.com y filtra deals de MercadoLibre."""
-    urls = [
-        "https://www.promodescuentos.com/rss/deals",
+    """Busca deals de MercadoLibre en promodescuentos.com."""
+    # Intentar página de tienda ML o RSS general filtrando por ML en título
+    fuentes = [
+        "https://www.promodescuentos.com/ofertas/tiendas/mercado-libre",
         "https://www.promodescuentos.com/rss/ofertas",
     ]
-    for url in urls:
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=15)
-            resp.raise_for_status()
-            root = ET.fromstring(resp.content)
-            items = root.findall(".//item")
-            log.info(f"  promodescuentos: {len(items)} items en feed")
 
-            # Debug: mostrar primeros 3 items
-            for i, item in enumerate(items[:3]):
-                t = item.findtext("title", "")
-                l = item.findtext("link", "")
-                d = (item.findtext("description", "") or "")[:200]
-                log.info(f"  [item {i}] titulo={t!r} link={l!r} desc={d!r}")
+    # Primero intentar RSS y filtrar por "Mercado Libre" en título
+    try:
+        resp = requests.get(fuentes[1], headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+        items = root.findall(".//item")
+        log.info(f"  RSS: {len(items)} items totales")
 
-            productos = []
-            for item in items:
-                titulo = item.findtext("title", "")
-                link   = item.findtext("link", "")
-                desc   = item.findtext("description", "") or ""
-                todo   = titulo + " " + link + " " + desc
+        productos = []
+        for item in items:
+            titulo = item.findtext("title", "")
+            pds_link = item.findtext("link", "")
+            desc   = item.findtext("description", "") or ""
 
-                if "mercadolibre" not in todo.lower():
-                    continue
+            # Filtrar por tienda ML
+            if "mercado libre" not in titulo.lower() and "mercadolibre" not in desc.lower():
+                continue
 
-                # Extraer % descuento
-                pct = re.search(r'(\d+)\s*%\s*(?:off|de\s*desc|desc)', todo, re.I)
-                descuento = int(pct.group(1)) if pct else 0
+            log.info(f"  Deal ML encontrado: {titulo[:60]}")
 
-                # Extraer precio actual
-                precio_m = re.search(r'\$\s?([\d,]+(?:\.\d+)?)', todo)
-                precio   = float(precio_m.group(1).replace(",", "")) if precio_m else 0
+            # Extraer precio
+            precio_m  = re.search(r'\$\s?([\d,]+(?:\.\d+)?)', desc + " " + titulo)
+            precio    = float(precio_m.group(1).replace(",", "")) if precio_m else 0
 
-                # Encontrar link directo de ML
-                ml_url_m = re.search(r'https?://[^\s"<>]*mercadolibre\.com\.mx[^\s"<>]*', todo)
-                ml_url   = ml_url_m.group(0).rstrip(".,)") if ml_url_m else link
+            # Extraer descuento
+            pct_m     = re.search(r'(\d+)\s*%', desc + " " + titulo)
+            descuento = int(pct_m.group(1)) if pct_m else 0
 
-                # ID único
-                mlm_id = re.search(r'MLM-?\d+', ml_url)
-                item_id = mlm_id.group(0) if mlm_id else ml_url[-30:]
+            # Obtener URL real de ML siguiendo el link de promodescuentos
+            ml_url = extraer_url_ml(pds_link) or pds_link
+            mlm_id = re.search(r'MLM-?\d+', ml_url)
+            item_id = mlm_id.group(0) if mlm_id else pds_link[-20:]
 
-                if descuento >= MIN_DISCOUNT:
-                    original = precio / (1 - descuento / 100) if descuento > 0 and precio > 0 else 0
-                    productos.append({
-                        "id":             item_id,
-                        "title":          titulo,
-                        "price":          precio,
-                        "original_price": original,
-                        "permalink":      ml_url,
-                        "currency_id":    "MXN",
-                    })
+            original = precio / (1 - descuento / 100) if descuento > 0 and precio > 0 else 0
+            productos.append({
+                "id":             item_id,
+                "title":          titulo,
+                "price":          precio,
+                "original_price": original,
+                "permalink":      ml_url,
+                "currency_id":    "MXN",
+            })
 
-            if productos:
-                log.info(f"  ✓ {len(productos)} deals de ML con ≥{MIN_DISCOUNT}% descuento")
-                return productos
+        log.info(f"  ✓ {len(productos)} deals de ML encontrados")
+        return productos
 
-        except Exception as e:
-            log.warning(f"  Error en {url}: {e}")
-
-    return []
+    except Exception as e:
+        log.warning(f"  Error promodescuentos: {e}")
+        return []
 
 
 def desde_ml_deals():
