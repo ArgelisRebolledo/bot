@@ -44,49 +44,70 @@ def obtener_token_ml():
     return resp.json()["access_token"]
 
 
-def scraper_get(url):
-    """Hace una petición a través de ScraperAPI para evitar bloqueos de IP."""
+def scraper_get_html(url):
+    """Obtiene HTML de una página a través de ScraperAPI con render JS."""
     resp = requests.get(
         "https://api.scraperapi.com",
-        params={"api_key": SCRAPER_API_KEY, "url": url},
-        timeout=70,
+        params={
+            "api_key": SCRAPER_API_KEY,
+            "url": url,
+            "render": "true",
+            "country_code": "mx",
+        },
+        timeout=120,
     )
     resp.raise_for_status()
-    return resp.json()
+    return resp.text
 
 
 def buscar_ofertas():
-    """Busca productos con descuento en ML México vía ScraperAPI."""
-    token = obtener_token_ml()
+    """Extrae productos con descuento de la página de ofertas de ML."""
+    import re
+    import json
 
-    busquedas = [
-        f"https://api.mercadolibre.com/sites/MLM/search?q=electronica&limit=20&sort=best_match&Authorization=Bearer%20{token}",
-        f"https://api.mercadolibre.com/sites/MLM/search?q=celular&limit=20&sort=best_match&Authorization=Bearer%20{token}",
-        f"https://api.mercadolibre.com/sites/MLM/search?q=hogar&limit=20&sort=best_match&Authorization=Bearer%20{token}",
-        f"https://api.mercadolibre.com/sites/MLM/search?q=ropa&limit=20&sort=best_match&Authorization=Bearer%20{token}",
-        f"https://api.mercadolibre.com/sites/MLM/search?q=deporte&limit=20&sort=best_match&Authorization=Bearer%20{token}",
-    ]
+    url = "https://www.mercadolibre.com.mx/ofertas"
+    log.info("  Obteniendo página de ofertas de ML...")
 
-    # ScraperAPI no soporta headers personalizados en plan gratuito,
-    # así que usamos el endpoint público sin auth (suficiente para búsqueda básica)
-    busquedas_publicas = [
-        "https://api.mercadolibre.com/sites/MLM/search?q=electronica&limit=20&sort=best_match",
-        "https://api.mercadolibre.com/sites/MLM/search?q=celular+smartphone&limit=20&sort=best_match",
-        "https://api.mercadolibre.com/sites/MLM/search?q=hogar+cocina&limit=20&sort=best_match",
-        "https://api.mercadolibre.com/sites/MLM/search?q=ropa+moda&limit=20&sort=best_match",
-        "https://api.mercadolibre.com/sites/MLM/search?q=deporte+fitness&limit=20&sort=best_match",
-    ]
+    try:
+        html = scraper_get_html(url)
+    except Exception as e:
+        log.error(f"Error obteniendo página: {e}")
+        return []
 
+    # ML embebe datos de productos como JSON en el HTML
     productos = []
-    for url in busquedas_publicas:
-        try:
-            data = scraper_get(url)
-            resultados = data.get("results", [])
-            productos.extend(resultados)
-            log.info(f"  ✓ {len(resultados)} productos de {url.split('q=')[1].split('&')[0]}")
-        except Exception as e:
-            log.warning(f"Error buscando: {e}")
+    patrones = [
+        r'"price":\s*(\d+\.?\d*)',
+        r'"original_price":\s*(\d+\.?\d*)',
+    ]
 
+    # Buscar bloques JSON de productos embebidos
+    bloques = re.findall(r'\{[^{}]*"title"[^{}]*"price"[^{}]*"permalink"[^{}]*\}', html)
+    for bloque in bloques:
+        try:
+            p = json.loads(bloque)
+            if p.get("title") and p.get("price") and p.get("permalink"):
+                productos.append(p)
+        except Exception:
+            pass
+
+    # Si no encontró con el método anterior, buscar estructura alternativa
+    if not productos:
+        matches = re.findall(
+            r'"title":"([^"]+)"[^}]*"price":(\d+\.?\d*)[^}]*"original_price":(\d+\.?\d*)[^}]*"permalink":"([^"]+)"',
+            html
+        )
+        for title, price, original, permalink in matches:
+            productos.append({
+                "title": title,
+                "price": float(price),
+                "original_price": float(original),
+                "permalink": permalink,
+                "id": permalink.split("-_JM")[0].split("/")[-1],
+                "currency_id": "MXN",
+            })
+
+    log.info(f"  {len(productos)} productos encontrados en página de ofertas")
     return productos
 
 
