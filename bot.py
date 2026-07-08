@@ -69,7 +69,12 @@ def buscar_url_ml(titulo):
             log.info(f"  ✓ ML URL encontrada: {url[:80]}")
             return url
 
-        log.warning(f"  Sin resultados ML para: {query[:50]}")
+        # Debug: mostrar contexto alrededor de "articulo" o "MLM"
+        idx = html.find("articulo.mercadolibre")
+        idx2 = html.find("MLM")
+        log.warning(f"  Sin resultados ML para: {query[:50]} | 'articulo' pos={idx} | 'MLM' pos={idx2}")
+        if idx2 > 0:
+            log.info(f"  Contexto MLM: {html[idx2:idx2+200]!r}")
     except Exception as e:
         log.warning(f"  Error buscando en ML: {e}")
     return None
