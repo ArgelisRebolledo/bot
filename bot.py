@@ -29,55 +29,16 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; OfertasBot/1.0)"}
 
 # ─── Fuentes de ofertas ───────────────────────────────────────────────────────
 
-def buscar_url_ml(titulo):
-    """Busca el producto en ML usando el título y retorna el primer resultado."""
-    try:
-        # Limpiar título: quitar "Mercado Libre: " del inicio
-        query = re.sub(r'^mercado libre\s*:\s*', '', titulo, flags=re.I).strip()
-        query_encoded = requests.utils.quote(query)
-        search_url = f"https://listado.mercadolibre.com.mx/{query_encoded}"
-
-        resp = requests.get(
-            "https://api.scraperapi.com",
-            params={
-                "api_key": SCRAPER_API_KEY,
-                "url":     search_url,
-                "render":  "true",
-                "wait":    "3000",
-            },
-            timeout=70,
-        )
-        html = resp.text
-
-        # Buscar el primer link de producto en resultados de ML
-        match = re.search(
-            r'href=["\'](https?://(?:articulo|www)\.mercadolibre\.com\.mx/[^"\']{20,})["\']',
-            html
-        )
-        if not match:
-            match = re.search(
-                r'"permalink"\s*:\s*"(https?://[^"]*mercadolibre\.com\.mx/[^"]{20,})"',
-                html
-            )
-        if not match:
-            match = re.search(
-                r'(https?://articulo\.mercadolibre\.com\.mx/MLM[^"\s\'<>]{10,})',
-                html
-            )
-        if match:
-            url = match.group(1).strip().rstrip(".,)")
-            log.info(f"  ✓ ML URL encontrada: {url[:80]}")
-            return url
-
-        # Debug: mostrar contexto alrededor de "articulo" o "MLM"
-        idx = html.find("articulo.mercadolibre")
-        idx2 = html.find("MLM")
-        log.warning(f"  Sin resultados ML para: {query[:50]} | 'articulo' pos={idx} | 'MLM' pos={idx2}")
-        if idx2 > 0:
-            log.info(f"  Contexto MLM: {html[idx2:idx2+200]!r}")
-    except Exception as e:
-        log.warning(f"  Error buscando en ML: {e}")
-    return None
+def link_busqueda_afiliado(titulo):
+    """Genera link de búsqueda en ML con tag de afiliado."""
+    query = re.sub(r'^mercado libre\s*:\s*', '', titulo, flags=re.I).strip()
+    query_encoded = requests.utils.quote(query)
+    return (
+        f"https://listado.mercadolibre.com.mx/{query_encoded}"
+        f"?matt_tool={ML_AFFILIATE_TAG}"
+        f"&matt_medium=affiliate"
+        f"&matt_content=tgbot"
+    )
 
 
 def desde_promodescuentos():
@@ -116,8 +77,8 @@ def desde_promodescuentos():
             pct_m     = re.search(r'(\d+)\s*%', desc + " " + titulo)
             descuento = int(pct_m.group(1)) if pct_m else 0
 
-            # Buscar URL real del producto en ML
-            ml_url = buscar_url_ml(titulo) or pds_link
+            # Generar link de búsqueda en ML con tag de afiliado
+            ml_url = link_busqueda_afiliado(titulo)
             mlm_id = re.search(r'MLM-?\d+', ml_url)
             item_id = mlm_id.group(0) if mlm_id else pds_link[-20:]
 
@@ -208,7 +169,7 @@ def formatear_mensaje(p):
     precio    = p["price"]
     original  = p.get("original_price") or precio
     descuento = calcular_descuento(p)
-    url       = link_afiliado(p["permalink"])
+    url       = p["permalink"]  # ya incluye tag de afiliado
 
     lineas = [f"🔥 *{titulo}*\n"]
     if descuento > 0:
