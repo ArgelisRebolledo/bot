@@ -74,6 +74,9 @@ def buscar_ofertas():
         log.error(f"Error obteniendo página: {e}")
         return []
 
+    # Debug: mostrar fragmento del HTML para diagnosticar estructura
+    log.info(f"  HTML recibido ({len(html)} chars). Muestra: {html[5000:6000]!r}")
+
     # ML embebe datos de productos como JSON en el HTML
     productos = []
     patrones = [
