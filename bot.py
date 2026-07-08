@@ -43,35 +43,33 @@ def obtener_token_ml():
     return resp.json()["access_token"]
 
 
-def buscar_ofertas(token, limite=100):
-    """Busca productos con descuento en ML México."""
-    headers = {"Authorization": f"Bearer {token}"}
-    categorias = [
-        "MLM1051",  # Electrónica
-        "MLM1246",  # Celulares
-        "MLM1430",  # Ropa y accesorios
-        "MLM1574",  # Hogar
-        "MLM1276",  # Deportes
+def buscar_ofertas():
+    """Busca productos con descuento en ML México usando la API pública."""
+    # Términos de búsqueda populares con buenos descuentos
+    busquedas = [
+        "electronica oferta",
+        "celular smartphone",
+        "ropa moda",
+        "hogar cocina",
+        "deporte fitness",
     ]
 
     productos = []
-    for cat in categorias:
+    for termino in busquedas:
         try:
             resp = requests.get(
                 "https://api.mercadolibre.com/sites/MLM/search",
                 params={
-                    "category": cat,
-                    "sort":     "best_match",
-                    "limit":    20,
-                    "promoted_items_only": False,
+                    "q":     termino,
+                    "sort":  "best_match",
+                    "limit": 20,
                 },
-                headers=headers,
                 timeout=10,
             )
             resp.raise_for_status()
             productos.extend(resp.json().get("results", []))
         except Exception as e:
-            log.warning(f"Error buscando categoría {cat}: {e}")
+            log.warning(f"Error buscando '{termino}': {e}")
 
     return productos
 
@@ -137,8 +135,7 @@ def correr():
     log.info(f"▶ Iniciando búsqueda de ofertas — {datetime.now().strftime('%H:%M %d/%m/%Y')}")
 
     try:
-        token    = obtener_token_ml()
-        productos = buscar_ofertas(token)
+        productos = buscar_ofertas()
         log.info(f"  {len(productos)} productos encontrados en total")
 
         # Filtrar: descuento mínimo y no publicados antes
