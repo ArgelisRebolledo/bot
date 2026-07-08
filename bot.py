@@ -1,157 +1,171 @@
 import os
+import re
 import time
 import logging
 import requests
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
-# ─── Configuración (se leen de las variables de entorno en Railway) ───────────
-TELEGRAM_TOKEN    = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHANNEL  = os.environ.get("TELEGRAM_CHANNEL", "@ofertasMexiCanal")
-ML_APP_ID         = os.environ["ML_APP_ID"]
-ML_SECRET         = os.environ["ML_SECRET"]
-ML_AFFILIATE_TAG  = os.environ.get("ML_AFFILIATE_TAG", "heycharalco")
-SCRAPER_API_KEY   = os.environ["SCRAPER_API_KEY"]
+# ─── Configuración ────────────────────────────────────────────────────────────
+TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_CHANNEL = os.environ.get("TELEGRAM_CHANNEL", "@ofertasMexiCanal")
+ML_APP_ID        = os.environ["ML_APP_ID"]
+ML_SECRET        = os.environ["ML_SECRET"]
+ML_AFFILIATE_TAG = os.environ.get("ML_AFFILIATE_TAG", "heycharalco")
 
-MIN_DISCOUNT      = int(os.environ.get("MIN_DISCOUNT", "25"))   # % mínimo de descuento
-POSTS_PER_RUN     = int(os.environ.get("POSTS_PER_RUN", "5"))   # cuántas ofertas publicar por corrida
-INTERVAL_HOURS    = int(os.environ.get("INTERVAL_HOURS", "6"))  # cada cuántas horas correr
+MIN_DISCOUNT     = int(os.environ.get("MIN_DISCOUNT", "20"))
+POSTS_PER_RUN    = int(os.environ.get("POSTS_PER_RUN", "5"))
+INTERVAL_HOURS   = int(os.environ.get("INTERVAL_HOURS", "6"))
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)s  %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
 
-# Evitar publicar el mismo producto dos veces en la misma sesión
-publicados = set()
+publicados = set()  # evitar duplicados en la misma sesión
+
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; OfertasBot/1.0)"}
 
 
-# ─── MercadoLibre ─────────────────────────────────────────────────────────────
+# ─── Fuentes de ofertas ───────────────────────────────────────────────────────
 
-def obtener_token_ml():
-    """Autenticación con ML usando Client Credentials."""
-    resp = requests.post(
-        "https://api.mercadolibre.com/oauth/token",
-        data={
-            "grant_type":    "client_credentials",
-            "client_id":     ML_APP_ID,
-            "client_secret": ML_SECRET,
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
+def desde_promodescuentos():
+    """Lee el RSS de promodescuentos.com y filtra deals de MercadoLibre."""
+    urls = [
+        "https://www.promodescuentos.com/rss/deals",
+        "https://www.promodescuentos.com/rss/ofertas",
+    ]
+    for url in urls:
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=15)
+            resp.raise_for_status()
+            root = ET.fromstring(resp.content)
+            items = root.findall(".//item")
+            log.info(f"  promodescuentos: {len(items)} items en feed")
+
+            productos = []
+            for item in items:
+                titulo = item.findtext("title", "")
+                link   = item.findtext("link", "")
+                desc   = item.findtext("description", "") or ""
+                todo   = titulo + " " + link + " " + desc
+
+                if "mercadolibre" not in todo.lower():
+                    continue
+
+                # Extraer % descuento
+                pct = re.search(r'(\d+)\s*%\s*(?:off|de\s*desc|desc)', todo, re.I)
+                descuento = int(pct.group(1)) if pct else 0
+
+                # Extraer precio actual
+                precio_m = re.search(r'\$\s?([\d,]+(?:\.\d+)?)', todo)
+                precio   = float(precio_m.group(1).replace(",", "")) if precio_m else 0
+
+                # Encontrar link directo de ML
+                ml_url_m = re.search(r'https?://[^\s"<>]*mercadolibre\.com\.mx[^\s"<>]*', todo)
+                ml_url   = ml_url_m.group(0).rstrip(".,)") if ml_url_m else link
+
+                # ID único
+                mlm_id = re.search(r'MLM-?\d+', ml_url)
+                item_id = mlm_id.group(0) if mlm_id else ml_url[-30:]
+
+                if descuento >= MIN_DISCOUNT:
+                    original = precio / (1 - descuento / 100) if descuento > 0 and precio > 0 else 0
+                    productos.append({
+                        "id":             item_id,
+                        "title":          titulo,
+                        "price":          precio,
+                        "original_price": original,
+                        "permalink":      ml_url,
+                        "currency_id":    "MXN",
+                    })
+
+            if productos:
+                log.info(f"  ✓ {len(productos)} deals de ML con ≥{MIN_DISCOUNT}% descuento")
+                return productos
+
+        except Exception as e:
+            log.warning(f"  Error en {url}: {e}")
+
+    return []
 
 
-def scraper_get_html(url):
-    """Obtiene HTML de una página a través de ScraperAPI con render JS."""
-    resp = requests.get(
-        "https://api.scraperapi.com",
-        params={
-            "api_key": SCRAPER_API_KEY,
-            "url": url,
-            "render": "true",
-            "country_code": "mx",
-        },
-        timeout=120,
-    )
-    resp.raise_for_status()
-    return resp.text
+def desde_ml_deals():
+    """Intento secundario: página de cupones/deals de ML (sin JS)."""
+    try:
+        resp = requests.get(
+            "https://www.mercadolibre.com.mx/ofertas",
+            headers={**HEADERS, "Accept-Language": "es-MX"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        html = resp.text
+
+        # Buscar JSON embebido con datos de productos
+        match = re.search(r'"items"\s*:\s*(\[.*?\])\s*[,}]', html, re.S)
+        if not match:
+            log.info("  ML deals: no se encontraron productos en HTML")
+            return []
+
+        import json
+        items = json.loads(match.group(1))
+        productos = []
+        for it in items:
+            precio    = it.get("price") or it.get("sale_price", 0)
+            original  = it.get("original_price", 0)
+            permalink = it.get("permalink") or it.get("url", "")
+            titulo    = it.get("title", "")
+            if precio and permalink and titulo:
+                productos.append({
+                    "id":             it.get("id", permalink[-20:]),
+                    "title":          titulo,
+                    "price":          float(precio),
+                    "original_price": float(original),
+                    "permalink":      permalink,
+                    "currency_id":    "MXN",
+                })
+        log.info(f"  ML deals directos: {len(productos)} productos")
+        return productos
+
+    except Exception as e:
+        log.warning(f"  Error ML deals: {e}")
+        return []
 
 
 def buscar_ofertas():
-    """Extrae productos con descuento de la página de ofertas de ML."""
-    import re
-    import json
-
-    url = "https://www.mercadolibre.com.mx/ofertas"
-    log.info("  Obteniendo página de ofertas de ML...")
-
-    try:
-        html = scraper_get_html(url)
-    except Exception as e:
-        log.error(f"Error obteniendo página: {e}")
-        return []
-
-    # Debug: buscar dónde están los datos de productos
-    log.info(f"  HTML recibido ({len(html)} chars)")
-    for keyword in ["__NEXT_DATA__", "__PRELOADED_STATE__", "original_price", '"permalink"', "MLM-"]:
-        idx = html.find(keyword)
-        log.info(f"  '{keyword}' encontrado en posición: {idx} | contexto: {html[max(0,idx-30):idx+100]!r}" if idx != -1 else f"  '{keyword}' NO encontrado")
-
-    # ML embebe datos de productos como JSON en el HTML
-    productos = []
-    patrones = [
-        r'"price":\s*(\d+\.?\d*)',
-        r'"original_price":\s*(\d+\.?\d*)',
-    ]
-
-    # Buscar bloques JSON de productos embebidos
-    bloques = re.findall(r'\{[^{}]*"title"[^{}]*"price"[^{}]*"permalink"[^{}]*\}', html)
-    for bloque in bloques:
-        try:
-            p = json.loads(bloque)
-            if p.get("title") and p.get("price") and p.get("permalink"):
-                productos.append(p)
-        except Exception:
-            pass
-
-    # Si no encontró con el método anterior, buscar estructura alternativa
+    productos = desde_promodescuentos()
     if not productos:
-        matches = re.findall(
-            r'"title":"([^"]+)"[^}]*"price":(\d+\.?\d*)[^}]*"original_price":(\d+\.?\d*)[^}]*"permalink":"([^"]+)"',
-            html
-        )
-        for title, price, original, permalink in matches:
-            productos.append({
-                "title": title,
-                "price": float(price),
-                "original_price": float(original),
-                "permalink": permalink,
-                "id": permalink.split("-_JM")[0].split("/")[-1],
-                "currency_id": "MXN",
-            })
-
-    log.info(f"  {len(productos)} productos encontrados en página de ofertas")
+        productos = desde_ml_deals()
     return productos
 
 
-def link_afiliado(url_producto):
-    """Agrega parámetros de seguimiento de afiliado al URL."""
-    sep = "&" if "?" in url_producto else "?"
-    return (
-        f"{url_producto}{sep}"
-        f"matt_tool={ML_AFFILIATE_TAG}"
-        f"&matt_medium=affiliate"
-        f"&matt_content=telegrambot"
-    )
+# ─── Links y formato ──────────────────────────────────────────────────────────
+
+def link_afiliado(url):
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}matt_tool={ML_AFFILIATE_TAG}&matt_medium=affiliate&matt_content=tgbot"
 
 
-def calcular_descuento(producto):
-    precio_actual   = producto.get("price", 0)
-    precio_original = producto.get("original_price") or 0
-    if precio_original > precio_actual > 0:
-        return round((1 - precio_actual / precio_original) * 100)
+def calcular_descuento(p):
+    precio    = p.get("price", 0)
+    original  = p.get("original_price") or 0
+    if original > precio > 0:
+        return round((1 - precio / original) * 100)
     return 0
 
 
-def formatear_mensaje(producto):
-    titulo   = producto["title"]
-    precio   = producto["price"]
-    original = producto.get("original_price") or precio
-    descuento = calcular_descuento(producto)
-    moneda   = producto.get("currency_id", "MXN")
-    url      = link_afiliado(producto["permalink"])
+def formatear_mensaje(p):
+    titulo    = p["title"]
+    precio    = p["price"]
+    original  = p.get("original_price") or precio
+    descuento = calcular_descuento(p)
+    url       = link_afiliado(p["permalink"])
 
     lineas = [f"🔥 *{titulo}*\n"]
-
     if descuento > 0:
-        lineas.append(f"~~${original:,.0f}~~ → *${precio:,.0f} {moneda}*")
+        lineas.append(f"~~${original:,.0f}~~ → *${precio:,.0f} MXN*")
         lineas.append(f"✅ *{descuento}% de descuento*\n")
     else:
-        lineas.append(f"*${precio:,.0f} {moneda}*\n")
-
+        lineas.append(f"*${precio:,.0f} MXN*\n")
     lineas.append(f"👉 [Ver oferta en MercadoLibre]({url})")
     return "\n".join(lineas)
 
@@ -162,9 +176,9 @@ def enviar_telegram(texto):
     resp = requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
         json={
-            "chat_id":                  TELEGRAM_CHANNEL,
-            "text":                     texto,
-            "parse_mode":               "Markdown",
+            "chat_id":   TELEGRAM_CHANNEL,
+            "text":      texto,
+            "parse_mode": "Markdown",
             "disable_web_page_preview": False,
         },
         timeout=10,
@@ -172,38 +186,31 @@ def enviar_telegram(texto):
     resp.raise_for_status()
 
 
-# ─── Lógica principal ─────────────────────────────────────────────────────────
+# ─── Principal ────────────────────────────────────────────────────────────────
 
 def correr():
-    log.info(f"▶ Iniciando búsqueda de ofertas — {datetime.now().strftime('%H:%M %d/%m/%Y')}")
-
+    log.info(f"▶ Buscando ofertas — {datetime.now().strftime('%H:%M %d/%m/%Y')}")
     try:
         productos = buscar_ofertas()
+        log.info(f"  {len(productos)} productos encontrados")
 
-        log.info(f"  {len(productos)} productos encontrados en total")
-
-        # Filtrar: descuento mínimo y no publicados antes
         ofertas = [
             p for p in productos
-            if calcular_descuento(p) >= MIN_DISCOUNT
-            and p["id"] not in publicados
+            if calcular_descuento(p) >= MIN_DISCOUNT and p["id"] not in publicados
         ]
-
-        # Ordenar por mayor descuento primero
         ofertas.sort(key=calcular_descuento, reverse=True)
-        log.info(f"  {len(ofertas)} ofertas con ≥{MIN_DISCOUNT}% de descuento")
+        log.info(f"  {len(ofertas)} nuevas con ≥{MIN_DISCOUNT}% descuento")
 
         publicadas = 0
         for oferta in ofertas[:POSTS_PER_RUN]:
             try:
-                mensaje = formatear_mensaje(oferta)
-                enviar_telegram(mensaje)
+                enviar_telegram(formatear_mensaje(oferta))
                 publicados.add(oferta["id"])
                 publicadas += 1
-                log.info(f"  ✓ Publicado: {oferta['title'][:50]}")
-                time.sleep(3)  # pausa para no saturar Telegram
+                log.info(f"  ✓ {oferta['title'][:60]}")
+                time.sleep(3)
             except Exception as e:
-                log.error(f"  ✗ Error publicando {oferta['id']}: {e}")
+                log.error(f"  ✗ Error: {e}")
 
         log.info(f"✅ {publicadas} ofertas publicadas")
 
@@ -212,11 +219,10 @@ def correr():
 
 
 def main():
-    log.info("🤖 Bot de ofertas iniciado")
+    log.info("🤖 Bot iniciado")
     correr()
-
     while True:
-        log.info(f"💤 Esperando {INTERVAL_HOURS} horas...")
+        log.info(f"💤 Próxima corrida en {INTERVAL_HOURS}h")
         time.sleep(INTERVAL_HOURS * 3600)
         correr()
 
