@@ -11,7 +11,8 @@ TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHANNEL = os.environ.get("TELEGRAM_CHANNEL", "@ofertasMexiCanal")
 ML_APP_ID        = os.environ["ML_APP_ID"]
 ML_SECRET        = os.environ["ML_SECRET"]
-ML_AFFILIATE_TAG = os.environ.get("ML_AFFILIATE_TAG", "heycharalco")
+ML_AFFILIATE_TAG  = os.environ.get("ML_AFFILIATE_TAG", "heycharalco")
+SCRAPER_API_KEY   = os.environ.get("SCRAPER_API_KEY", "")
 
 MIN_DISCOUNT     = int(os.environ.get("MIN_DISCOUNT", "20"))
 POSTS_PER_RUN    = int(os.environ.get("POSTS_PER_RUN", "5"))
