@@ -29,23 +29,26 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; OfertasBot/1.0)"}
 # ─── Fuentes de ofertas ───────────────────────────────────────────────────────
 
 def extraer_url_ml(pds_url):
-    """Visita la página de promodescuentos y extrae el link real de ML."""
+    """Renderiza la página de promodescuentos con JS y extrae el link real de ML."""
     try:
-        resp = requests.get(pds_url, headers=HEADERS, timeout=10, allow_redirects=True)
+        resp = requests.get(
+            "https://api.scraperapi.com",
+            params={
+                "api_key": SCRAPER_API_KEY,
+                "url":     pds_url,
+                "render":  "true",
+            },
+            timeout=60,
+        )
         html = resp.text
-        log.info(f"  [debug] página PDS largo={len(html)}")
-        # Buscar distintos patrones de links
-        patrones = {
-            "mercadolibre": r'https?://[^\s"\'<>]*mercadolibre[^\s"\'<>]*',
-            "visit/go":     r'https?://[^\s"\'<>]*(?:visit|go|click|out)[^\s"\'<>]*',
-            "data-url":     r'data-url=["\']([^"\']+)["\']',
-            "href ML":      r'href=["\']([^"\']*mercado[^"\']*)["\']',
-        }
-        for nombre, patron in patrones.items():
-            m = re.search(patron, html)
-            log.info(f"  [debug] {nombre}: {m.group(0)[:120]!r}" if m else f"  [debug] {nombre}: no encontrado")
+        match = re.search(r'https?://[^\s"\'<>]*mercadolibre\.com\.mx/[^\s"\'<>]{10,}', html)
+        if match:
+            url = match.group(0).rstrip(".,)")
+            log.info(f"  ✓ ML URL extraída: {url[:80]}")
+            return url
+        log.warning("  No se encontró URL de ML en página renderizada")
     except Exception as e:
-        log.info(f"  [debug] Error: {e}")
+        log.warning(f"  Error extrayendo ML URL: {e}")
     return None
 
 
