@@ -47,9 +47,9 @@ def obtener_token_ml():
 def scraper_get(url):
     """Hace una petición a través de ScraperAPI para evitar bloqueos de IP."""
     resp = requests.get(
-        "http://api.scraperapi.com",
+        "https://api.scraperapi.com",
         params={"api_key": SCRAPER_API_KEY, "url": url},
-        timeout=30,
+        timeout=70,
     )
     resp.raise_for_status()
     return resp.json()
