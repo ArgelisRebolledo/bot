@@ -33,12 +33,15 @@ def extraer_url_ml(pds_url):
     try:
         resp = requests.get(pds_url, headers=HEADERS, timeout=10, allow_redirects=True)
         html = resp.text
+        log.info(f"  [debug] página PDS largo={len(html)}, muestra={html[2000:2500]!r}")
         # Buscar links de ML en la página
         match = re.search(r'https?://[^\s"\'<>]*mercadolibre\.com\.mx[^\s"\'<>]*', html)
         if match:
+            log.info(f"  [debug] ML URL encontrada: {match.group(0)[:100]}")
             return match.group(0).rstrip(".,)")
-    except Exception:
-        pass
+        log.info("  [debug] No se encontró URL de ML en la página")
+    except Exception as e:
+        log.info(f"  [debug] Error: {e}")
     return None
 
 
