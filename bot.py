@@ -42,6 +42,13 @@ def desde_promodescuentos():
             items = root.findall(".//item")
             log.info(f"  promodescuentos: {len(items)} items en feed")
 
+            # Debug: mostrar primeros 3 items
+            for i, item in enumerate(items[:3]):
+                t = item.findtext("title", "")
+                l = item.findtext("link", "")
+                d = (item.findtext("description", "") or "")[:200]
+                log.info(f"  [item {i}] titulo={t!r} link={l!r} desc={d!r}")
+
             productos = []
             for item in items:
                 titulo = item.findtext("title", "")
