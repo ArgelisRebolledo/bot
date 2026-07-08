@@ -44,32 +44,33 @@ def obtener_token_ml():
 
 
 def buscar_ofertas():
-    """Busca productos con descuento en ML México usando la API pública."""
-    # Términos de búsqueda populares con buenos descuentos
-    busquedas = [
-        "electronica oferta",
-        "celular smartphone",
-        "ropa moda",
-        "hogar cocina",
-        "deporte fitness",
+    """Busca productos con descuento en ML México."""
+    token = obtener_token_ml()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "Mozilla/5.0 (compatible; OfertasBot/1.0)",
+        "Accept": "application/json",
+    }
+
+    # Endpoints alternativos para encontrar ofertas
+    endpoints = [
+        # Productos con tag de buen precio
+        ("https://api.mercadolibre.com/sites/MLM/search",
+         {"tag": "good_price", "sort": "best_match", "limit": 50}),
+        # Destacados del día
+        ("https://api.mercadolibre.com/sites/MLM/search",
+         {"tag": "best_seller", "sort": "best_match", "limit": 50}),
     ]
 
     productos = []
-    for termino in busquedas:
+    for url, params in endpoints:
         try:
-            resp = requests.get(
-                "https://api.mercadolibre.com/sites/MLM/search",
-                params={
-                    "q":     termino,
-                    "sort":  "best_match",
-                    "limit": 20,
-                },
-                timeout=10,
-            )
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
             resp.raise_for_status()
             productos.extend(resp.json().get("results", []))
+            log.info(f"  ✓ {len(resp.json().get('results', []))} productos de {params.get('tag', url)}")
         except Exception as e:
-            log.warning(f"Error buscando '{termino}': {e}")
+            log.warning(f"Error en endpoint {params}: {e}")
 
     return productos
 
@@ -136,6 +137,7 @@ def correr():
 
     try:
         productos = buscar_ofertas()
+
         log.info(f"  {len(productos)} productos encontrados en total")
 
         # Filtrar: descuento mínimo y no publicados antes
