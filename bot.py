@@ -29,27 +29,44 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; OfertasBot/1.0)"}
 
 # ─── Fuentes de ofertas ───────────────────────────────────────────────────────
 
-def extraer_url_ml(pds_url):
-    """Renderiza la página de promodescuentos con JS y extrae el link real de ML."""
+def buscar_url_ml(titulo):
+    """Busca el producto en ML usando el título y retorna el primer resultado."""
     try:
+        # Limpiar título: quitar "Mercado Libre: " del inicio
+        query = re.sub(r'^mercado libre\s*:\s*', '', titulo, flags=re.I).strip()
+        query_encoded = requests.utils.quote(query)
+        search_url = f"https://listado.mercadolibre.com.mx/{query_encoded}"
+
         resp = requests.get(
             "https://api.scraperapi.com",
             params={
                 "api_key": SCRAPER_API_KEY,
-                "url":     pds_url,
+                "url":     search_url,
                 "render":  "true",
+                "wait":    "3000",
             },
-            timeout=60,
+            timeout=70,
         )
         html = resp.text
-        match = re.search(r'https?://[^\s"\'<>]*mercadolibre\.com\.mx/[^\s"\'<>]{10,}', html)
+
+        # Buscar el primer link de producto en resultados de ML
+        match = re.search(
+            r'href=["\']( https?://(?:articulo|www)\.mercadolibre\.com\.mx/[^"\']{20,})["\']',
+            html
+        )
+        if not match:
+            match = re.search(
+                r'"permalink"\s*:\s*"(https?://[^"]*mercadolibre\.com\.mx/[^"]{20,})"',
+                html
+            )
         if match:
-            url = match.group(0).rstrip(".,)")
-            log.info(f"  ✓ ML URL extraída: {url[:80]}")
+            url = match.group(1).strip().rstrip(".,)")
+            log.info(f"  ✓ ML URL encontrada: {url[:80]}")
             return url
-        log.warning("  No se encontró URL de ML en página renderizada")
+
+        log.warning(f"  Sin resultados ML para: {query[:50]}")
     except Exception as e:
-        log.warning(f"  Error extrayendo ML URL: {e}")
+        log.warning(f"  Error buscando en ML: {e}")
     return None
 
 
@@ -89,8 +106,8 @@ def desde_promodescuentos():
             pct_m     = re.search(r'(\d+)\s*%', desc + " " + titulo)
             descuento = int(pct_m.group(1)) if pct_m else 0
 
-            # Obtener URL real de ML siguiendo el link de promodescuentos
-            ml_url = extraer_url_ml(pds_link) or pds_link
+            # Buscar URL real del producto en ML
+            ml_url = buscar_url_ml(titulo) or pds_link
             mlm_id = re.search(r'MLM-?\d+', ml_url)
             item_id = mlm_id.group(0) if mlm_id else pds_link[-20:]
 
